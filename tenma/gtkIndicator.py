@@ -22,10 +22,13 @@ import glob
 import os
 import signal
 import sys
+import time
 
 import gi
 import pkg_resources
 import serial
+
+from threading import Thread
 
 gi.require_version('Gtk', '3.0')
 gi.require_version('AppIndicator3', '0.1')
@@ -34,6 +37,7 @@ gi.require_version('Notify', '0.7')
 from gi.repository import Gtk as gtk
 from gi.repository import AppIndicator3 as appindicator
 from gi.repository import Notify as notify
+from gi.repository import GObject
 
 try:
     from tenma.tenmaDcLib import instantiate_tenma_class_from_device_response, TenmaException
@@ -85,6 +89,39 @@ class gtkController():
         self.itemSet = []
         pass
 
+    def show_current_voltage(self):
+        t = 2
+        while True:
+            current = self.T.runningCurrent(1)
+            if not current:
+                notify.Notification.new("<b>ERROR</b>",
+                                        "No response on %s" % self.serialPort,
+                                        gtk.STOCK_DIALOG_ERROR).show()
+                self.setItemSetStatus(False)
+            else:
+                self.setItemSetStatus(True)
+
+            voltage = self.T.runningVoltage(1)
+            if not voltage:
+                notify.Notification.new("<b>ERROR</b>",
+                                        "No response on %s" % self.serialPort,
+                                        gtk.STOCK_DIALOG_ERROR).show()
+                self.setItemSetStatus(False)
+            else:
+                self.setItemSetStatus(True)
+
+            GObject.idle_add(
+                self.item_running_current.set_label,
+                f"Current: {current}",
+                priority=GObject.PRIORITY_DEFAULT
+                )
+            GObject.idle_add(
+                self.item_running_voltage.set_label,
+                f"Voltage: {voltage}",
+                priority=GObject.PRIORITY_DEFAULT
+                )
+            time.sleep(1)
+
     def portSelected(self, source):
         oldPort = self.serialPort
         self.serialPort = source.get_label()
@@ -115,6 +152,9 @@ class gtkController():
         self.item_unit_version.set_label(ver[:20])
         self.memoryMenu = self.build_memory_submenu(None, self.T.NCONFS)
 
+        self.update = Thread(target=self.show_current_voltage)
+        self.update.setDaemon(True)
+        self.update.start()
 
     def memorySelected(self, source):
         """
@@ -196,6 +236,13 @@ class gtkController():
         self.item_unit_version.set_right_justified(True)
         self.item_unit_version.set_sensitive(False)
 
+        self.item_running_voltage = gtk.MenuItem("Voltage: --")
+        self.item_running_voltage.set_right_justified(True)
+        self.item_running_voltage.set_sensitive(False)
+
+        self.item_running_current = gtk.MenuItem("Current: --")
+        self.item_running_current.set_right_justified(True)
+        self.item_running_current.set_sensitive(False)
 
         item_quit = gtk.MenuItem('Quit')
         item_quit.connect('activate', self.quit)
@@ -217,6 +264,8 @@ class gtkController():
 
         menu.append(self.item_connectedPort)
         menu.append(self.item_unit_version)
+        menu.append(self.item_running_voltage)
+        menu.append(self.item_running_current)
         menu.append(item_serial_menu)
 
         sep = gtk.SeparatorMenuItem()
