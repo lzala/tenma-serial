@@ -37,7 +37,7 @@ gi.require_version('Notify', '0.7')
 from gi.repository import Gtk as gtk
 from gi.repository import AppIndicator3 as appindicator
 from gi.repository import Notify as notify
-from gi.repository import GObject
+from gi.repository import GLib
 
 try:
     from tenma.tenmaDcLib import instantiate_tenma_class_from_device_response, TenmaException
@@ -80,17 +80,22 @@ def serial_ports():
 
 
 class gtkController():
-    def __init__(self):
-        self.serialPort = "No Port"
+    def __init__(self, indicator, serial_port=None):
+        self.indicator = indicator
+        self.serialPort = serial_port
+        if self.serialPort is None:
+            try:
+                self.serialPort = serial_ports()[0]
+            except IndexError:
+                self.serialPort = "No Port"
+
         self.serialMenu = None
         self.memoryMenu = None
-
         self.T = None
         self.itemSet = []
         pass
 
-    def show_current_voltage(self):
-        t = 2
+    def show_current_and_voltage(self):
         while True:
             current = self.T.runningCurrent(1)
             if not current:
@@ -110,21 +115,18 @@ class gtkController():
             else:
                 self.setItemSetStatus(True)
 
-            GObject.idle_add(
-                self.item_running_current.set_label,
-                f"Current: {current}",
-                priority=GObject.PRIORITY_DEFAULT
-                )
-            GObject.idle_add(
-                self.item_running_voltage.set_label,
-                f"Voltage: {voltage}",
-                priority=GObject.PRIORITY_DEFAULT
+            GLib.idle_add(
+                self.indicator.set_label,
+                f"{voltage}V {current}A", APPINDICATOR_ID,
+                priority=GLib.PRIORITY_DEFAULT
                 )
             time.sleep(1)
 
-    def portSelected(self, source):
+    def portSelected(self, source=None):
         oldPort = self.serialPort
-        self.serialPort = source.get_label()
+
+        if source is not None:
+            self.serialPort = source.get_label()
 
         try:
             if not self.T:
@@ -136,6 +138,7 @@ class gtkController():
             notify.Notification.new("<b>ERROR</b>", repr(e),
                                     gtk.STOCK_DIALOG_ERROR).show()
             self.serialPort = oldPort
+            exit(-1)
 
         ver = self.T.getVersion()
         if not ver:
@@ -145,14 +148,14 @@ class gtkController():
             self.serialPort = oldPort
             self.setItemSetStatus(False)
         else:
-            notify.Notification.new("<b>CONNECTED TO</b>", ver, None).show()
+            notify.Notification.new("CONNECTED TO:", ver, None).show()
             self.setItemSetStatus(True)
 
         self.item_connectedPort.set_label(self.serialPort)
         self.item_unit_version.set_label(ver[:20])
         self.memoryMenu = self.build_memory_submenu(None, self.T.NCONFS)
 
-        self.update = Thread(target=self.show_current_voltage)
+        self.update = Thread(target=self.show_current_and_voltage)
         self.update.setDaemon(True)
         self.update.start()
 
@@ -181,7 +184,7 @@ class gtkController():
             self.memoryMenu.remove(entry)
 
         for m_index in range(1,nmemories+1):
-            menuEntry = gtk.MenuItem(m_index)
+            menuEntry = gtk.MenuItem(label=m_index)
             menuEntry.connect('activate', self.memorySelected)
             self.memoryMenu.append(menuEntry)
             menuEntry.show()
@@ -200,7 +203,7 @@ class gtkController():
             self.serialMenu.remove(entry)
 
         for serialPort in serial_ports():
-            menuEntry = gtk.MenuItem(serialPort)
+            menuEntry = gtk.MenuItem(label=serialPort)
             menuEntry.connect('activate', self.portSelected)
             self.serialMenu.append(menuEntry)
             menuEntry.show()
@@ -209,7 +212,7 @@ class gtkController():
         self.serialMenu.append(sep)
         sep.show()
 
-        menuEntry = gtk.MenuItem("Reload")
+        menuEntry = gtk.MenuItem(label="Reload")
         menuEntry.connect('activate', self.build_serial_submenu)
         self.serialMenu.append(menuEntry)
         menuEntry.show()
@@ -228,44 +231,32 @@ class gtkController():
 
         menu = gtk.Menu()
 
-        self.item_connectedPort = gtk.MenuItem(self.serialPort)
-        self.item_connectedPort.set_right_justified(True)
+        self.item_connectedPort = gtk.MenuItem(label=self.serialPort)
         self.item_connectedPort.set_sensitive(False)
 
-        self.item_unit_version = gtk.MenuItem("unknown version")
-        self.item_unit_version.set_right_justified(True)
+        self.item_unit_version = gtk.MenuItem(label="unknown version")
         self.item_unit_version.set_sensitive(False)
 
-        self.item_running_voltage = gtk.MenuItem("Voltage: --")
-        self.item_running_voltage.set_right_justified(True)
-        self.item_running_voltage.set_sensitive(False)
-
-        self.item_running_current = gtk.MenuItem("Current: --")
-        self.item_running_current.set_right_justified(True)
-        self.item_running_current.set_sensitive(False)
-
-        item_quit = gtk.MenuItem('Quit')
+        item_quit = gtk.MenuItem(label='Quit')
         item_quit.connect('activate', self.quit)
 
-        item_serial_menu = gtk.MenuItem('Serial')
+        item_serial_menu = gtk.MenuItem(label='Serial')
         item_serial_menu.set_submenu(serialMenu)
 
-        item_memory_menu = gtk.MenuItem('Memory')
+        item_memory_menu = gtk.MenuItem(label='Memory')
         item_memory_menu.set_submenu(memoryMenu)
 
-        item_on = gtk.MenuItem('ON')
+        item_on = gtk.MenuItem(label='ON')
         item_on.connect('activate', self.tenmaTurnOn)
 
-        item_off = gtk.MenuItem('OFF')
+        item_off = gtk.MenuItem(label='OFF')
         item_off.connect('activate', self.tenmaTurnOff)
 
-        item_reset = gtk.MenuItem('RESET')
+        item_reset = gtk.MenuItem(label='RESET')
         item_reset.connect('activate', self.tenmaReset)
 
         menu.append(self.item_connectedPort)
         menu.append(self.item_unit_version)
-        menu.append(self.item_running_voltage)
-        menu.append(self.item_running_current)
         menu.append(item_serial_menu)
 
         sep = gtk.SeparatorMenuItem()
@@ -319,14 +310,18 @@ class gtkController():
 
 
 def main():
+    serial_port = sys.argv[1]
     notify.init(APPINDICATOR_ID)
-    controller = gtkController()
     indicator = appindicator.Indicator.new(APPINDICATOR_ID,
                                            pkg_resources.resource_filename(__name__, 'logo.png'),
                                            appindicator.IndicatorCategory.SYSTEM_SERVICES)
+    controller = gtkController(indicator, serial_port)
+
     indicator.set_status(appindicator.IndicatorStatus.ACTIVE)
     indicator.set_menu(controller.build_gtk_menu())
     signal.signal(signal.SIGINT, signal.SIG_DFL)
+    controller.portSelected()
+
     gtk.main()
 
 if __name__ == "__main__":
