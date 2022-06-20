@@ -137,8 +137,8 @@ class gtkController():
             self.setItemSetStatus(False)
             notify.Notification.new("<b>ERROR</b>", repr(e),
                                     gtk.STOCK_DIALOG_ERROR).show()
-            self.serialPort = oldPort
-            exit(-1)
+            self.serialPort = None
+            return
 
         ver = self.T.getVersion()
         if not ver:
@@ -323,6 +323,7 @@ def main():
     controller.portSelected()
 
     gtk.main()
+
 
 if __name__ == "__main__":
     main()
